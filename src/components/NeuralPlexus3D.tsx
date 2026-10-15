@@ -201,6 +201,15 @@ interface PulseData {
   size: number;
 }
 
+// Deterministic fast PRNG to guarantee fixed buffer sizes across HMR and page renders
+function createPRNG(initialSeed = 1337) {
+  let s = initialSeed;
+  return function () {
+    s = (s * 16807) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
+}
+
 // 3D Constellation Scene Component
 function NeuralConstellationScene({
   activeHubId,
@@ -230,6 +239,7 @@ function NeuralConstellationScene({
 
   // Pre-generate nodes & topology matching the density and clustering of the reference image
   const { nodes, edges, initialLinePositions, initialLineColors } = useMemo(() => {
+    const prng = createPRNG(4242);
     const rawNodes: NodeData[] = [];
 
     // 1. Add major hubs
@@ -247,7 +257,7 @@ function NeuralConstellationScene({
       });
     });
 
-    // 2. Generate 220 surrounding synaptic nodes forming an expansive constellation across the right space
+    // 2. Generate 220 surrounding synaptic nodes forming a cohesive constellation around (0, 0, 0)
     const nodeCount = 220;
     const colors = [
       new THREE.Color('#FFF8EE'),
@@ -265,27 +275,27 @@ function NeuralConstellationScene({
 
       // Form bridges between hubs, hub clusters, or ambient dispersion centered symmetrically at (0, 0, 0)
       let clusterCenter: THREE.Vector3;
-      if (Math.random() < 0.45) {
-        const lerpFactor = Math.random();
+      if (prng() < 0.45) {
+        const lerpFactor = prng();
         clusterCenter = new THREE.Vector3(...parentHub.pos).lerp(
           new THREE.Vector3(...nextHub.pos),
           lerpFactor
         );
-      } else if (Math.random() < 0.8) {
+      } else if (prng() < 0.8) {
         clusterCenter = new THREE.Vector3(...parentHub.pos);
       } else {
         // Balanced ambient dispersion centered symmetrically around (0, 0, 0)
         clusterCenter = new THREE.Vector3(
-          (Math.random() - 0.5) * 2.4,
-          (Math.random() - 0.5) * 2.4,
-          (Math.random() - 0.5) * 1.6
+          (prng() - 0.5) * 2.4,
+          (prng() - 0.5) * 2.4,
+          (prng() - 0.5) * 1.6
         );
       }
 
       // Organic dispersion
-      const radius = 0.25 + Math.pow(Math.random(), 1.2) * 1.5;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = (Math.random() - 0.5) * Math.PI * 0.95;
+      const radius = 0.25 + Math.pow(prng(), 1.2) * 1.5;
+      const theta = prng() * Math.PI * 2;
+      const phi = (prng() - 0.5) * Math.PI * 0.95;
 
       const offset = new THREE.Vector3(
         radius * Math.cos(theta) * Math.cos(phi),
@@ -302,10 +312,10 @@ function NeuralConstellationScene({
       rawNodes.push({
         basePos: p.clone(),
         pos: p.clone(),
-        size: 0.035 + Math.random() * 0.05,
-        color: colors[Math.floor(Math.random() * colors.length)],
-        pulsePhase: Math.random() * Math.PI * 2,
-        pulseSpeed: 1.2 + Math.random() * 2.2,
+        size: 0.035 + prng() * 0.05,
+        color: colors[Math.floor(prng() * colors.length)],
+        pulsePhase: prng() * Math.PI * 2,
+        pulseSpeed: 1.2 + prng() * 2.2,
         isHub: false,
       });
     }
@@ -373,11 +383,12 @@ function NeuralConstellationScene({
   // Traveling action potential signals along filaments
   const pulses = useMemo<PulseData[]>(() => {
     const pulseCount = 36;
+    const prng = createPRNG(9999);
     return Array.from({ length: pulseCount }, () => ({
-      edgeIndex: Math.floor(Math.random() * edges.length),
-      progress: Math.random(),
-      speed: 0.4 + Math.random() * 0.8,
-      size: 0.16 + Math.random() * 0.08,
+      edgeIndex: Math.floor(prng() * edges.length),
+      progress: prng(),
+      speed: 0.35 + prng() * 0.65,
+      size: 0.16 + prng() * 0.08,
     }));
   }, [edges.length]);
 
@@ -409,6 +420,7 @@ function NeuralConstellationScene({
   // Deep background and shallow foreground bokeh orbs
   const bokehData = useMemo(() => {
     const count = 90;
+    const prng = createPRNG(7777);
     const pos = new Float32Array(count * 3);
     const col = new Float32Array(count * 3);
 
@@ -416,15 +428,16 @@ function NeuralConstellationScene({
       // 25% near camera foreground bokeh, 75% deep background bokeh
       const isFore = i < 22;
       const z = isFore
-        ? THREE.MathUtils.randFloat(1.8, 3.6)
-        : THREE.MathUtils.randFloat(-2.0, -5.2);
+        ? THREE.MathUtils.lerp(1.8, 3.6, prng())
+        : THREE.MathUtils.lerp(-2.0, -5.2, prng());
 
-      pos[i * 3 + 0] = THREE.MathUtils.randFloatSpread(14.0);
-      pos[i * 3 + 1] = THREE.MathUtils.randFloatSpread(8.0);
+      pos[i * 3 + 0] = (prng() - 0.5) * 14.0;
+      pos[i * 3 + 1] = (prng() - 0.5) * 8.0;
       pos[i * 3 + 2] = z;
 
+      const pVal = prng();
       const c = new THREE.Color(
-        Math.random() > 0.45 ? '#FFA25B' : Math.random() > 0.5 ? '#E07A43' : '#FF7A29'
+        pVal > 0.45 ? '#FFA25B' : pVal > 0.5 ? '#E07A43' : '#FF7A29'
       );
       col[i * 3 + 0] = c.r;
       col[i * 3 + 1] = c.g;
@@ -493,13 +506,13 @@ function NeuralConstellationScene({
   useFrame((state, delta) => {
     const time = state.clock.getElapsedTime();
 
-    // 1. Inertial rotation & auto-rotation around its own center
+    // 1. Slow, majestic auto-rotation around its own center (exactly 38 seconds per full revolution)
     if (autoRotate && !isDragging.current) {
-      rotationVelocity.current.y += delta * 0.15;
+      currentRotation.current.y += delta * ((Math.PI * 2) / 38);
     }
 
-    const targetParallaxX = state.pointer.y * 0.22;
-    const targetParallaxY = state.pointer.x * 0.32;
+    const targetParallaxX = state.pointer.y * 0.18;
+    const targetParallaxY = state.pointer.x * 0.25;
 
     currentRotation.current.x += rotationVelocity.current.x;
     currentRotation.current.y += rotationVelocity.current.y;
